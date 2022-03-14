@@ -2,11 +2,9 @@
 Author: xudawu
 Date: 2022-03-03 18:38:56
 LastEditors: xudawu
-LastEditTime: 2022-03-12 15:24:48
+LastEditTime: 2022-03-14 12:16:16
 '''
 import torch
-
-
 class LSTM(torch.nn.Module):
     def __init__(self,input_size, hidden_size, layers_num, out_features):
         super(LSTM, self).__init__()
@@ -33,6 +31,7 @@ class LSTM(torch.nn.Module):
 
         # LSTM前向传播，此时out维度为(batch_size, seq_length, hidden_size*direction_num)
         # hn,cn表示最后一个状态,维度与h0和c0一样
+        x = torch.relu(x)
         out, (hn, cn) = self.lstm(x, (h0, c0))
 
         # 我们只需要最后一步的输出,即(batch_size, -1, output_size)
@@ -66,16 +65,12 @@ for i in range(10):
 print('- ' * 20)
 print(input_list)
 print(label_list)
-from sklearn.preprocessing import LabelEncoder
-from keras.utils.np_utils import to_categorical
-import torch
+
 #给分类编号为数字
-lalelEncode_list = LabelEncoder().fit_transform(label_list)
-print(lalelEncode_list)
 #将标签转换为one-hot编码,两个参数分别为待转列表,种类数
-labelOneHot_list = to_categorical(lalelEncode_list, num_classes=19)
-print(labelOneHot_list)
-label_tensor = torch.FloatTensor(labelOneHot_list)
+labelTemp_tensor=torch.tensor(label_list)
+label_tensor = torch.nn.functional.one_hot(labelTemp_tensor, num_classes=19).float()  #默认有个0类别,返回为LongTensor
+# label_tensor.type(torch.FloatTensor)
 #显示分类标签和编码
 tempLabelName_list = list()
 for i in range(len(label_list)):
