@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2022-03-03 16:13:12
 LastEditors: xudawu
-LastEditTime: 2022-03-12 15:38:23
+LastEditTime: 2022-03-14 11:16:49
 '''
 import torch
 class LSTM(torch.nn.Module):
@@ -32,6 +32,11 @@ class LSTM(torch.nn.Module):
 
         # LSTM前向传播，此时out维度为(batch_size, seq_length, hidden_size*direction_num)
         # hn,cn表示最后一个状态,维度与h0和c0一样
+        '''
+        激活函数是用来加入非线性因素的，提高神经网络对模型的表达能力，解决线性模型所不能解决的问题
+        relu()线性激活函数,小于0的数会被限制为0,缓解过拟合和加快运算速度
+        '''
+        x=torch.relu(x)
         out, (hn, cn) = self.lstm(x, (h0, c0))
 
         # 我们只需要最后一步的输出,即(batch_size, -1, output_size)
