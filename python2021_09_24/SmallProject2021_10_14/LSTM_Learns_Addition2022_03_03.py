@@ -69,6 +69,7 @@ print(label_list)
 #给分类编号为数字
 #将标签转换为one-hot编码,两个参数分别为待转列表,种类数
 labelTemp_tensor=torch.tensor(label_list)
+# 转为float类型使输入输出数据类型一致
 label_tensor = torch.nn.functional.one_hot(labelTemp_tensor, num_classes=19).float()  #默认有个0类别,返回为LongTensor
 # label_tensor.type(torch.FloatTensor)
 #显示分类标签和编码
