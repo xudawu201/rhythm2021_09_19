@@ -21,7 +21,7 @@ def splitCsv(filePath,keyName):
         #得到当前组
         curGroup_DataFrame=fileReadGroup_DataFrame.get_group(curGroupName_str)
         tempFileName=keyName+str(i)+'.csv'
-        #存储文件
-        curGroup_DataFrame.to_csv(tempFileName,encoding='utf-8',header=False, index=False)
+        #存储文件,同时存列名,不存储行名
+        curGroup_DataFrame.to_csv(tempFileName,encoding='utf-8',header=True, index=False)
 
 splitCsv(filePath,keyName)
