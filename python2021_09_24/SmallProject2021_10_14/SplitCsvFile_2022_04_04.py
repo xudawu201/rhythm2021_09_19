@@ -20,7 +20,7 @@ def splitCsv(filePath,keyName):
         curGroupName_str=fileReadGroup_DataFrame.size().index[i]
         #得到当前组
         curGroup_DataFrame=fileReadGroup_DataFrame.get_group(curGroupName_str)
-        tempFileName=keyName+str(i)+'.csv'
+        tempFileName=keyName+curGroupName_str+'.csv'
         #存储文件,同时存列名,不存储行名，utf-8-sig避免中文乱码
         curGroup_DataFrame.to_csv(tempFileName,encoding='utf-8-sig',header=True, index=False)
 
