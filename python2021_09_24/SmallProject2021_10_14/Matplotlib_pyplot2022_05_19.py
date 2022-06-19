@@ -41,6 +41,7 @@ plt.ion()# 打开交互模式
 xDynamic_list=[]
 yDynamic_list=[]
 def dynamicDraw(x,y):
+    plt.cla() # 清除之前的绘图
     xDynamic_list.append(x)  # 添加x轴数据
     yDynamic_list.append(y)  # 添加y轴数据
     plt.plot(xDynamic_list, yDynamic_list,color='b',ls='-',label='line')
