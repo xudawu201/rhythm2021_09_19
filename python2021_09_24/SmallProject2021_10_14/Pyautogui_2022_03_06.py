@@ -59,8 +59,8 @@ pyautogui.pixelMatchesColor(500,500,(12,120,400)) ：是一个对比函数，对
 如果可以找到图片，则返回图片的位置，如：Box(left=25, top=703, width=22, height=22)；如果找不到图片，则返回None;
 如果，屏幕上有多处图片可以匹配，则需要使用locateAllOnScreen(‘zan.png’) ，如果匹配到多个值，则返回一个list，参考如下：
 '''
-# 图像识别（一个）
-btm = pyautogui.locateOnScreen('Test2021_10_13\image_recognition.PNG')
+# 图像识别（一个）,可选灰度值匹配加快速度
+btm = pyautogui.locateOnScreen('Test2021_10_13\image_recognition.PNG',grayscale=True)
 print('image_recognition:',btm)  # Box(left=, top=, width=, height=)
 print('- ' * 10, '分割线', '- ' * 10)
 # 图像识别（多个）
