@@ -45,6 +45,7 @@ pyautogui.scroll(-500)  # 滚动鼠标；
 '''
 获取屏幕截图
 im = pyautogui.screenshot()：返回屏幕的截图，是一个Pillow的image对象
+im = pyautogui.screenshot(region=(0, 0, 300 ,400))：返回指定区域的截图，是一个Pillow的image对象
 im.getpixel((500, 500))：返回im对象上，（500，500）这一点像素的颜色，是一个RGB元组
 pyautogui.pixelMatchesColor(500,500,(12,120,400)) ：是一个对比函数，对比的是屏幕上（500，500）这一点像素的颜色，与所给的元素是否相同；
 '''
