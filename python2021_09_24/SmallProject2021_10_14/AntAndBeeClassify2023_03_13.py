@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2023-03-13 13:36:10
 LastEditors: xudawu
-LastEditTime: 2023-03-23 19:43:31
+LastEditTime: 2023-03-23 20:15:26
 '''
 '''
 文件结构
@@ -66,14 +66,14 @@ from torch import nn
 # in_features=NN_model.classifier.in_features
 
 # 使用vgg19()
-NN_model=models.vgg19()
+# NN_model=models.vgg19()
 # 使用pytorch2.0提高训练速度
 # NN_model = torch.compile(NN_model)
 # 第7个为全连接层
-in_features=NN_model.classifier[6].in_features
+# in_features=NN_model.classifier[6].in_features
 
 # 设置输出类别
-NN_model.fc=nn.Linear(in_features, 2)
+# NN_model.fc=nn.Linear(in_features, 2)
 
 # 自己构建
 import torch
@@ -132,7 +132,7 @@ stride = 1
 # padding=int((kernel_size - stride) / 2)
 out_features=2
 # 实例化
-# NN_model=CNN(in_channels,out_channels,kernel_size,stride,out_features)
+NN_model=CNN(in_channels,out_channels,kernel_size,stride,out_features)
 # 使用pytorch2.0提高训练速度
 # NN_model = torch.compile(NN_model)
 
@@ -175,7 +175,7 @@ import matplotlib.pyplot as plt
 NN_model=NN_model.cuda()
 criterion=criterion.cuda()
 
-epoch=10
+epoch=20
 for step in range(epoch):
     print('epoch:',step+1)
     starTime_time=time.time()
@@ -232,6 +232,21 @@ print('训练完成,开始验证')
 # y=NN_model(x)
 # print('cnn:',y,'y最大值索引:',torch.argmax(y).tolist(),' real:',dataset_train[200][1])
 
+print(NN_model.parameters())
+
+# 开始测试验证
+count_int=0
+for data in dataloader_train:
+    imgs,targets=data
+    # 转到GPU上
+    imgs=imgs.cuda()
+    targets=targets.cuda()
+    outputs=NN_model(imgs)
+    if outputs.argmax().tolist()==targets.tolist()[0]:
+        count_int=count_int+1
+
+print('验证训练集','totalCount_int:',count_int,'准确率:',count_int/len(dataset_train))
+
 
 # 测试集
 dataset_test=ImageFolder('AntAndBeeClassify2023_03_13\\DataSet\\hymenoptera_data\\val',transform=transform)
@@ -248,4 +263,4 @@ for data in dataloader_test:
     if outputs.argmax().tolist()==targets.tolist()[0]:
         count_int=count_int+1
 
-print('totalCount_int:',count_int,'准确率:',count_int/len(dataset_test))
+print('验证测试集','totalCount_int:',count_int,'准确率:',count_int/len(dataset_test))
