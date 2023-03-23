@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2023-03-13 13:36:10
 LastEditors: xudawu
-LastEditTime: 2023-03-23 16:59:01
+LastEditTime: 2023-03-23 19:43:31
 '''
 '''
 文件结构
@@ -19,7 +19,7 @@ DataSet
 from torchvision.datasets import ImageFolder
 # 图像调整
 from torchvision import transforms
-
+import torch
 # 图像统一调整
 transform=transforms.Compose([
     transforms.Resize((512,512)),
@@ -43,7 +43,6 @@ print(dataset_train.imgs[0])
 # torch自带的标准数据集加载函数
 from torch.utils.data import DataLoader
 dataloader_train=DataLoader(dataset_train,batch_size=1,shuffle=True)
-
 # 使用提供模型
 # 构造网络
 import torchvision.models as models
@@ -52,16 +51,26 @@ from torch import nn
 # 不需要预训练权重,pretrained默认也为False
 # 改变全连接层数据
 # 使用resnet()
-NN_model=models.resnet18()
+# NN_model=models.resnet18()
 # 使用pytorch2.0提高训练速度
 # NN_model = torch.compile(NN_model)
-in_features=NN_model.fc.in_features
+# in_features=NN_model.fc.in_features
+# 将最后的全连接改为(36，2)
+# NN_model.fc=nn.Sequential(nn.Linear(in_features,36),
+#                           nn.Linear(36,2))
 
 # 使用densenet()
 # NN_model=models.densenet121()
 # 使用pytorch2.0提高训练速度
 # NN_model = torch.compile(NN_model)
 # in_features=NN_model.classifier.in_features
+
+# 使用vgg19()
+NN_model=models.vgg19()
+# 使用pytorch2.0提高训练速度
+# NN_model = torch.compile(NN_model)
+# 第7个为全连接层
+in_features=NN_model.classifier[6].in_features
 
 # 设置输出类别
 NN_model.fc=nn.Linear(in_features, 2)
@@ -161,7 +170,12 @@ def dynamicDraw(x_list,y_list,xd,yd):
     return x_list,y_list
     
 import matplotlib.pyplot as plt
-epoch=5
+
+# 将模型迁移到gpu
+NN_model=NN_model.cuda()
+criterion=criterion.cuda()
+
+epoch=10
 for step in range(epoch):
     print('epoch:',step+1)
     starTime_time=time.time()
@@ -173,6 +187,9 @@ for step in range(epoch):
     for data in dataloader_train:
         # 取出训练数据
         imgs,targets=data
+        # 转到GPU上
+        imgs=imgs.cuda()
+        targets=targets.cuda()
         # 获得网络输出
         outPut_tensor=NN_model(imgs)
         loss=criterion(outPut_tensor,targets)
@@ -224,6 +241,9 @@ dataloader_test=DataLoader(dataset_test,batch_size=1,shuffle=True)
 count_int=0
 for data in dataloader_test:
     imgs,targets=data
+    # 转到GPU上
+    imgs=imgs.cuda()
+    targets=targets.cuda()
     outputs=NN_model(imgs)
     if outputs.argmax().tolist()==targets.tolist()[0]:
         count_int=count_int+1
