@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2023-03-31 17:12:36
 LastEditors: xudawu
-LastEditTime: 2023-03-31 19:09:14
+LastEditTime: 2023-04-01 17:33:18
 '''
 # import win32gui
 # win32gui整合到pywin32中了
@@ -104,3 +104,119 @@ win32api.keybd_event(65, 0, 0, 0)
 # 松开A
 win32api.keybd_event(65, 0, 1, 0)
 # 操作键盘使用
+
+# 进行截图
+'''
+Author: xudawu
+Date: 2023-03-31 21:24:19
+LastEditors: xudawu
+LastEditTime: 2023-04-01 17:32:15
+'''
+import win32gui
+import win32api
+import win32ui
+import win32con
+import numpy as np
+from PIL import Image
+from ctypes import windll
+# 操作图像
+from PIL import ImageGrab
+import pyautogui
+import time
+
+# 使用pywin32截图时间0.003秒
+# 使用ImageGrab.grab截图时间0.04秒
+# 使用pyautogui截图时间0.45秒
+class GetWindowsScreenshot():
+    def __init__(self,):
+        pass
+    def getWindowsScreenshot(self,hwnd,region=None):
+        a=time.time()
+        # 获取窗口位置、大小
+        if region!=None:
+            # 截取窗口区域,其实xy坐标和截取的长度和高度
+            left, top, width, height = region
+        else:
+            # 如果没有指定截取大小,则获取屏幕区域
+            # 用于获取屏幕宽度
+            width = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
+            # 获取屏幕高度
+            height = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
+            # 获取屏幕左边距
+            left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+            # 获取屏幕右边距
+            top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+        # 激活窗口到最上层
+        # win32gui.SetForegroundWindow(hwnd)
+        # 截图区域
+        # img = ImageGrab.grab(region)
+        # img = pyautogui.screenshot(region=[0,0,1000,500])
+        # 获取窗口设备上下文DC
+        hwnd_dc = win32gui.GetWindowDC(hwnd)
+        mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+
+        # 创建内存设备上下文DC
+        save_dc = mfc_dc.CreateCompatibleDC()
+
+        # 创建位图对象
+        save_bitmap = win32ui.CreateBitmap()
+        save_bitmap.CreateCompatibleBitmap(mfc_dc, width, height)
+
+        # 将位图选入内存设备上下文DC,即将位图数据放置在刚开辟的内存里
+        save_dc.SelectObject(save_bitmap)
+
+        # 如果窗口使用了硬件加速渲染，那么使用位图方式截取窗口截图可能会出现黑屏问题。
+        # 在这种情况下，可以尝试使用`PrintWindow`函数来捕获屏幕上的窗口图像，即使窗口使用了硬件加速也可以捕获。
+        
+        # 从设备上下文DC中复制位图数据到内存设备上下文DC中
+        # save_dc.BitBlt((从窗口的xy坐标开始截图), (要截取的长和高), mfc_dc, (相对xy坐标的起始点), win32con.SRCCOPY)
+        save_dc.BitBlt((0, 0), (width, height), mfc_dc, (left, top), win32con.SRCCOPY)
+        
+        # 调用PrintWindow函数捕获窗口图像并保存到位图对象中
+        # 如果窗口使用了硬件加速渲染，则PrintWindow函数可以正确捕获图像
+        # 0-保存整个窗口，1-只保存客户区,成功保存返回1
+        # result = windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
+        # print('result: ',result)
+
+        # # 保存图片到本地,是未处理的彩色
+        # save_bitmap.SaveBitmapFile(save_dc, 'screenshot.png')
+
+        # 获取位图数据
+        bmpinfo = save_bitmap.GetInfo()
+        bmp_str = save_bitmap.GetBitmapBits(True)
+        img = Image.frombuffer('RGB', (bmpinfo['bmWidth'], bmpinfo['bmHeight']), bmp_str, 'raw', 'BGRX', 0, 1)
+    
+        # img = np.frombuffer(bmp_str, dtype='uint8')
+        # img.shape = (height, width, 4)
+        # img = img[:, :, :3]
+        # img = Image.fromarray(img)
+
+        # 释放设备上下文DC
+        save_dc.DeleteDC()
+        mfc_dc.DeleteDC()
+        win32gui.DeleteObject(save_bitmap.GetHandle())
+        win32gui.ReleaseDC(hwnd, hwnd_dc)
+
+        # # # 转换图像格式，并返回灰度图片
+        # # img = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+
+        b=time.time()
+        print(b-a)
+        return img
+
+# 获取窗口截图并显示
+# Geometry Dash窗口
+# hwnd_int = win32gui.FindWindow(0, 'Geometry Dash')
+hwnd_int = win32gui.WindowFromPoint((100, 100))
+print(hwnd_int)
+# 获取窗口标题 
+windowsTitle_str = win32gui.GetWindowText(hwnd_int)
+print(windowsTitle_str)
+# 获取窗口位置
+print(win32gui.GetWindowRect(hwnd_int))
+# 指定截图区域,起始xy坐标和截取的长和高
+region=(0,0,1000,500)
+GetWindowsScreenshot=GetWindowsScreenshot()
+# img = GetWindowsScreenshot.getWindowsScreenshot(hwnd_int)
+img = GetWindowsScreenshot.getWindowsScreenshot(hwnd_int,region)
+# img.show()
