@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2024-06-09 17:31:00
 LastEditors: xudawu
-LastEditTime: 2024-06-19 22:11:54
+LastEditTime: 2024-06-20 13:05:50
 '''
 
 import tkinter as tk  # 导入Tkinter库用于构建图形用户界面
@@ -244,7 +244,7 @@ class Actor(nn.Module):
         # 上下左右四个输出
         self.fc2 = nn.Linear(1048,self.output_size)
         
-    def forward(self, state_tensor,softmax_dim=0):
+    def forward(self, state_tensor):
         """
         前向传播函数，用于计算给定状态的输出分布。
 
@@ -261,7 +261,7 @@ class Actor(nn.Module):
         # 通过全连接层fc2得到动作网络的输出
         x_tensor=self.fc2(x_tensor)
         # 使用softmax函数将输出转换为概率分布
-        prob = nn.functional.softmax(x_tensor, dim=softmax_dim)
+        prob = nn.functional.softmax(x_tensor)
         return prob
     
 class Critic(nn.Module):
@@ -362,17 +362,24 @@ class PPOAgent:
             done_mask = 0 if done else 1
             done_lst.append([done_mask])
         
-        # 将列表中的数据转换为PyTorch张量
-        # 注意：这里使用了分号（;）来连接多个语句，这是一种常见的Python编码风格
-        s, a, r, s_prime, done_mask, prob_a = torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst), \
-                                          torch.tensor(r_lst), torch.tensor(s_prime_lst, dtype=torch.float), \
-                                          torch.tensor(done_lst, dtype=torch.float), torch.tensor(prob_a_lst)
-        
+        # 将状态列表转换为浮点型的PyTorch张量
+        state_tensors = torch.tensor(s_lst, dtype=torch.float)
+        # 将动作列表转换为PyTorch张量
+        action_tensors = torch.tensor(a_lst)
+        # 将奖励列表转换为PyTorch张量
+        reward_tensors = torch.tensor(r_lst)
+        # 将下一个状态列表转换为浮点型的PyTorch张量
+        next_state_tensors = torch.tensor(s_prime_lst, dtype=torch.float)
+        # 将结束标志列表（done_mask）转换为浮点型的PyTorch张量，表示每个步骤是否结束
+        done_mask_tensors = torch.tensor(done_lst, dtype=torch.float)
+        # 将动作概率列表转换为PyTorch张量
+        probability_action_tensors = torch.tensor(prob_a_lst)
+
         # 清空数据集，为下次批量处理做准备
         self.data = []
         
         # 返回转换后的张量
-        return s, a, r, s_prime, done_mask, prob_a
+        return state_tensors, action_tensors, reward_tensors, next_state_tensors, done_mask_tensors, probability_action_tensors
     
     def updateModel(self):
         """
@@ -381,26 +388,22 @@ class PPOAgent:
         通过使用SARSA算法更新网络的策略和价值函数，以优化目标函数。
         """
         # 从经验回放中生成一个批次的数据
-        s, a, r, s_prime, done_mask, prob_a = self.make_batch()
+        state_tensors, action_tensors, reward_tensors, next_state_tensors, done_mask_tensors, probability_action_tensors = self.make_batch()
         # 转到cpu或者gpu训练
-        s=s.to(self.device)
-        a=a.to(self.device)
-        r=r.to(self.device)
-        s_prime=s_prime.to(self.device)
-        done_mask=done_mask.to(self.device)
-        prob_a=prob_a.to(self.device)
+        state_tensors=state_tensors.to(self.device)
+        action_tensors=action_tensors.to(self.device)
+        reward_tensors=reward_tensors.to(self.device)
+        next_state_tensors=next_state_tensors.to(self.device)
+        done_mask_tensors=done_mask_tensors.to(self.device)
+        probability_action_tensors=probability_action_tensors.to(self.device)
         # 对于每个训练回合的经验训练K_epoch次，更新网络参数
         for i in range(self.K_epoch):
             # 计算TD目标，即当前状态的价值估计与当前获得奖励之和，即考虑现在奖励和未来奖励
             # gamma折扣因子，用于衡量未来奖励的重要性
             # done_mask确保在结束状态时不考虑未来的奖励
-            td_target = r + self.gamma * self.critic(s_prime) * done_mask
+            td_target = reward_tensors + self.gamma * self.critic(next_state_tensors) * done_mask_tensors
             # 计算状态价值的估计误差
-            delta = td_target - self.critic(s)
-            # 将Tensor转换为numpy数组以进行后续计算
-            # 数据转到cpu进行计算
-            delta = delta.cpu().detach().numpy()
-            # delta = delta.detach()
+            delta = td_target - self.critic(state_tensors)
 
             # 初始化优势函数的列表
             advantage_lst = []
@@ -416,13 +419,13 @@ class PPOAgent:
             advantage = torch.tensor(advantage_lst, dtype=torch.float).to(self.device)
 
             # 计算当前策略
-            pi = self.actor(s, softmax_dim=1)
+            pi = self.actor(state_tensors)
             # 从当前策略中获取实际采取的动作的概率
-            pi_a = pi.gather(1,a)
+            pi_a = pi.gather(1,action_tensors)
             # 计算新旧策略的比例
             # 如果新策略更倾向于某个动作（比例大于1），那么就强化这个动作的学习
             # 在训练中，网络更新参数后某个动作概率被优化大了，则表示鼓励这个动作
-            ratio = torch.exp(torch.log(pi_a) - torch.log(prob_a))  # a/b == exp(ln(a)-ln(b))=a/b
+            ratio = torch.exp(torch.log(pi_a) - torch.log(probability_action_tensors))  # a/b == exp(ln(a)-ln(b))=a/b
 
             # 计算两个策略梯度损失的最小值
             # surr1和surr2分别是未裁剪和裁剪后的策略比率乘以优势函数
@@ -432,7 +435,7 @@ class PPOAgent:
             # 又通过裁剪避免更新幅度过大导致策略不稳定。
             surr1 = ratio * advantage
             surr2 = torch.clamp(ratio, 1-self.eps_clip, 1+self.eps_clip) * advantage
-            loss = -torch.min(surr1, surr2) + nn.functional.smooth_l1_loss(self.critic(s) , td_target.detach())
+            loss = -torch.min(surr1, surr2) + nn.functional.smooth_l1_loss(self.critic(state_tensors) , td_target.detach())
 
             # 输出当前回合的损失平均值
             print('loss mean:',f'{loss.mean().item():.5f}')
@@ -447,6 +450,7 @@ class PPOAgent:
             self.critic_optimizer.step()
             
 def main():
+    import time
     global player_pos, game_over, steps_taken
     # 保存模型路径和名字
     # actor模型路径
@@ -464,8 +468,8 @@ def main():
     score = 0.0
     # 动作字典
     action_dict={0:'n',1:'e',2:'s',3:'w'}
-    # 每一轮训练最大步数
-    T_horizon=21
+    # 每一轮训练最大步数,也等于经验池最大长度
+    maxStep_int=21
     for n_epi in range(150):
         
         # 初始化
@@ -477,7 +481,6 @@ def main():
         # move(direction)  # 执行移动
         window.update_idletasks()  # 更新界面
         window.update()  # 更新并等待一小段时间让界面反应
-        import time
         time.sleep(0.5)  # 控制自动播放的速度，可调整
         # 启动Tkinter主循环
         # window.mainloop()
@@ -489,7 +492,7 @@ def main():
         steps_int=0
         while not done:
             #每T_horizon次之后或者游戏结束后训练更新网络
-            for t in range(T_horizon):
+            for t in range(maxStep_int):
                 #返回概率tensor
                 prob = ppoAgent_model.actor(torch.tensor(s).float().to(device))
                 # 创建概率分布模型,然后利用这个分布进行采样、计算对数概率、熵等操作
@@ -506,8 +509,7 @@ def main():
                 steps_int+=1
                 window.update_idletasks()  # 更新界面
                 window.update()  # 更新并等待一小段时间让界面反应
-                import time
-                time.sleep(0.05)  # 控制自动播放的速度，可调整
+                time.sleep(0.01)  # 控制自动播放的速度，可调整
                 # 判断游戏是否结束
                 check_game_over()
                 done = game_over
@@ -518,7 +520,7 @@ def main():
                 # 放大奖励,使目标更重要
                 r=r*10
                 # 步数越高奖励越低
-                r=r-steps_int*8
+                r=r-steps_int*5
                 # 如果找到宝藏,奖励1000
                 if player_pos == treasurePos_tuple:
                     r=r+1000
