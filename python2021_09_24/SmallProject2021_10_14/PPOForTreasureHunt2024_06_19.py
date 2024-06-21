@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2024-06-09 17:31:00
 LastEditors: xudawu
-LastEditTime: 2024-06-21 04:19:36
+LastEditTime: 2024-06-21 12:04:15
 '''
 
 import tkinter as tk  # 导入Tkinter库用于构建图形用户界面
@@ -298,7 +298,7 @@ class Critic(nn.Module):
         return value
 
 class PPOAgent:
-    def __init__(self, input_size, output_size,device):
+    def __init__(self, learning_rate,train_epoch,actorModel,criticModel,actor_optimizer,critic_optimizer,device='cpu'):
         """
         初始化代理代理类。
 
@@ -317,32 +317,30 @@ class PPOAgent:
         self.done_list = []
         self.old_prob_list = []
         # 学习率
-        self.learning_rate = 0.001
+        self.learning_rate = learning_rate
         # gamma折扣因子，用于衡量未来奖励的重要性
-        self.gamma         = 0.95
+        self.gamma         = 0.98
         # GAE计算优势时的损失因子
         self.gae_lambda    = 0.95
-        # 优势裁剪因子
-        self.lmbda         = 0.95
         # 优势裁剪参数
         self.eps_clip      = 0.1
         # 一次经验池训练次数参数
-        self.K_epoch       = 3
-        # 初始化演员网络，用于生成动作
-        self.actor = Actor(input_size, output_size)
-        # 初始化评论家网络，用于评估动作的好坏
-        self.critic = Critic(input_size)
-        # 使用Adam优化器优化网络,自适应调整学习率更新
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=self.learning_rate)
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=self.learning_rate)
+        self.K_epoch       = train_epoch
+        # 加载模型
+        self.actor = actorModel
+        self.critic = criticModel
+
+        # 给网络添加优化器
+        self.actor_optimizer = actor_optimizer
+        self.critic_optimizer = critic_optimizer
 
         # 将模型迁移到设备
         self.device = device
         self.actor=self.actor.to(self.device)
         self.critic=self.critic.to(self.device)
-        # 将数据迁移到设备
-        self.state_tensor=self.state_tensor.to(device)
-        self.next_state_tensor=self.next_state_tensor.to(device)
+        # 数据迁移到device
+        self.state_tensor=self.state_tensor.to(self.device)
+        self.next_state_tensor=self.next_state_tensor.to(self.device)
 
     # 数据转为tensor
     def dataToTensor(self):
@@ -503,17 +501,42 @@ def main():
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # device = torch.device('cpu')	# 使用cpu训练
     device = torch.device('cuda')	# 使用gpu训练
+    # 学习率
+    learning_rate=0.0001
+    # 一次经验池数据训练次数
+    train_epoch=3
+    # 输入特征数
+    input_size=4
+    # actor输出序列个数
+    output_size=4
+
+    # 初始化演员网络，用于生成动作
+    # 初始化评论家网络，用于评估动作的好坏
+    actor_model = Actor(input_size, output_size)
+    critic_model = Critic(input_size)
+    # 使用Adam优化器优化网络
+    actor_optimizer = optim.Adam(actor_model.parameters(), lr=learning_rate)
+    critic_optimizer = optim.Adam(critic_model.parameters(), lr=learning_rate)
+    # 加载模型
+    # actor_model=torch.load(actorModelFilePath_str)
+    # critic_model=torch.load(criticModelFilePath_str)
     # 初始化PPOAgent
-    ppoAgent_model = PPOAgent(4, 4,device)
+    ppoAgent_model = PPOAgent(
+        learning_rate,
+        train_epoch,
+        actor_model,
+        critic_model,
+        actor_optimizer,
+        critic_optimizer,
+        device)
     # 加载模型
     # model=torch.load(modelFilePath_str)
-    #初始化得分
-    score = 0.0
     # 动作字典
     action_dict={0:'n',1:'e',2:'s',3:'w'}
     # 每一轮训练最大步数,也等于经验池最大长度
     maxStep_int=21
-    for n_epi in range(150):
+    epoch_int=300
+    for n_epi in range(epoch_int):
         
         # 初始化
         reset_game_state()
@@ -531,7 +554,8 @@ def main():
         #是否游戏结束
         done = False
         check_game_over()
-        score=0
+        # 总得分
+        totalReward_float=0.0
         # 步数计数
         steps_int=0
         while not done:
@@ -560,26 +584,42 @@ def main():
                 # s_prime等于玩家和宝藏坐标
                 nextState=player_pos+treasurePos_tuple
                 nextState_tensor=torch.tensor(nextState).float().to(device)
-                # r等于10减去玩家和宝藏坐标差的绝对值,即玩家和宝藏距离越近,reward越高
-                r=10-(abs(nextState[2]-nextState[0])+abs(nextState[3]-nextState[1]))
-                # 放大奖励,使目标更重要
-                r=r*10
+                # r等于玩家和宝藏坐标差即玩家和宝藏距离越近,reward越高
+                # 奖励权重值,用于修正奖励大小
+                rewardWeight_float=10.0
+                # r=nextState[0]-nextState[2]+nextState[1]-nextState[3]+rewardbias_float
+                # 判断是接近还是远离宝藏
+                # 之前距离
+                oldDistance_float = abs(state_tensor[0]-state_tensor[2])+abs(state_tensor[1]-state_tensor[3])
+                nextDistance_float = abs(nextState_tensor[0]-nextState_tensor[2])+abs(nextState_tensor[1]-nextState_tensor[3])
+                if nextDistance_float<oldDistance_float:
+                    isNearFlag_int=1
+                elif nextDistance_float==oldDistance_float:
+                    isNearFlag_int=0
+                else:
+                    isNearFlag_int=-1
+                r=rewardWeight_float*isNearFlag_int
+                # 奖励缩放因子,用于修正奖励大小
+                rewardScale_float=10
+                r=r*rewardScale_float
                 # 步数越高奖励越低
-                r=r-steps_int*5
-                # 如果找到宝藏,奖励1000
+                # 步数奖励缩放因子,用于修正奖励大小
+                stepRewardScale_float=5
+                r=r-steps_int*stepRewardScale_float
+                # 如果找到宝藏,奖励100
                 if player_pos == treasurePos_tuple:
-                    r=r+100
+                    r=r+1000
 
+                # 当前总得分
+                totalReward_float=totalReward_float+r
                 # 将当前的经验数据（状态、动作、奖励等）放入模型的经验回放缓冲区
                 print(state_tensor, 'a:',a, r, nextState_tensor, prob[a].item(),done)
-                # ppoAgent_model.put_data((state_tensor, a, r, nextState_tensor, prob[a].item(), done))
-                ppoAgent_model.saveMemory(state_tensor, a, r, nextState_tensor, done, prob[a].item())
+                ppoAgent_model.saveMemory(state_tensor, a, totalReward_float, nextState_tensor, done, prob[a].item())
 
                 #环境继承
                 state_tensor = nextState_tensor
                 #当前得分
-                score += r
-                print('step:',t,'reward',r)
+                print('step:',t,'reward',r,'totalReward_float',totalReward_float)
                 if done:
                     print('game over')
                     break
