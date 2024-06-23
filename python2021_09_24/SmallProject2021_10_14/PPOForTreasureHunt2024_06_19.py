@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2024-06-09 17:31:00
 LastEditors: xudawu
-LastEditTime: 2024-06-21 12:04:15
+LastEditTime: 2024-06-24 02:04:02
 '''
 
 import tkinter as tk  # 导入Tkinter库用于构建图形用户界面
@@ -314,16 +314,16 @@ class PPOAgent:
         self.action_list = []
         self.reward_list = []
         self.next_state_tensor=torch.tensor([],dtype=torch.float)
-        self.done_list = []
         self.old_prob_list = []
+        self.done_list = []
         # 学习率
         self.learning_rate = learning_rate
         # gamma折扣因子，用于衡量未来奖励的重要性
-        self.gamma         = 0.98
+        self.gamma         = 0.9
         # GAE计算优势时的损失因子
-        self.gae_lambda    = 0.95
+        self.gae_lambda    = 0.8
         # 优势裁剪参数
-        self.eps_clip      = 0.1
+        self.ppo_clip      = 0.1
         # 一次经验池训练次数参数
         self.K_epoch       = train_epoch
         # 加载模型
@@ -360,7 +360,10 @@ class PPOAgent:
         # 遍历数据集中的每个转换
         for done in self.done_list:     
             # 根据done值计算done_mask，并添加到done_lst中
-            done_int = 0 if done else 1
+            if done[0] == True:
+                done_int=0
+            else:
+                done_int=1
             tempDone_list.append([done_int])
         
         # 将状态列表转换为浮点型的PyTorch张量
@@ -368,22 +371,22 @@ class PPOAgent:
         action_tensor = torch.tensor(self.action_list)
         # 将奖励列表转换为PyTorch张量
         reward_tensor = torch.tensor(self.reward_list)
-        # 将结束标志列表（done_mask）转换为浮点型的PyTorch张量，表示每个步骤是否结束
-        done_tensor = torch.tensor(tempDone_list, dtype=torch.float)
         # 将动作概率列表转换为PyTorch张量
         old_prob_tensor = torch.tensor(self.old_prob_list)
+        # 将结束标志列表（done_mask）转换为浮点型的PyTorch张量，表示每个步骤是否结束
+        done_tensor = torch.tensor(tempDone_list, dtype=torch.float)
         
         # 返回转换后的张量
-        return action_tensor, reward_tensor, done_tensor,old_prob_tensor
+        return action_tensor, reward_tensor, old_prob_tensor,done_tensor
     
     # 存储训练数据
-    def saveMemory(self, state_tensor, action_int, reward_float, next_state_tensor, done_bool, old_prob_float):
+    def saveMemory(self, state_tensor, action_int, reward_float, next_state_tensor, old_prob_float,done_bool):
         self.state_tensor = torch.cat((self.state_tensor, state_tensor.unsqueeze(0)), dim=0)
         self.action_list.append([action_int])
         self.reward_list.append([reward_float])
         self.next_state_tensor = torch.cat((self.next_state_tensor, next_state_tensor.unsqueeze(0)), dim=0)
-        self.done_list.append([done_bool])
         self.old_prob_list.append([old_prob_float])
+        self.done_list.append([done_bool])
 
     # 清空训练数据
     def clearMemory(self):
@@ -391,26 +394,28 @@ class PPOAgent:
         self.action_list = []
         self.reward_list = []
         self.next_state_tensor=torch.tensor([],dtype=torch.float)
-        self.done_list = []
         self.old_prob_list = []
+        self.done_list = []
         # 将数据迁移到设备
         self.state_tensor=self.state_tensor.to(self.device)
         self.next_state_tensor=self.next_state_tensor.to(self.device)
     
     # 计算GAE优势
-    def get_GAE_advantage(selft,gamma, gae_lambda, td_delta):
-        td_delta = td_delta
-        advantage_list = []
-        advantage = 0.0
-        # 优势值损耗越大,agent越重视未来,但也越难收敛
-        for t in reversed(range(0, len(td_delta))):
-            advantage = gamma * gae_lambda * advantage + td_delta[t][0]
-            advantage_list.append(advantage)
-        advantage_list.reverse()
-        return torch.tensor(advantage_list, dtype=torch.float)
+    def getGAE(selft,gae_lambda,advantageDelta_tensor):
+        # GAE表初始化
+        GAEAdvantage_list = []
+        # 当前优势值
+        gae_tensor = 0.0
+        # gae_lambda损耗因子,越大,agent越重视未来,但也越难收敛
+        for t in reversed(range(0, len(advantageDelta_tensor))):
+            gae_tensor = gae_lambda * gae_tensor + advantageDelta_tensor[t][0]
+            GAEAdvantage_list.append(gae_tensor)
+        # 反转回来和序列数据一致,通过反向计算的GAE实际上代表了当前状态对未来的优势
+        GAEAdvantage_list.reverse()
+        return torch.tensor(GAEAdvantage_list, dtype=torch.float)
 
     # 利用经验池数据更新模型
-    def updateModel(self):
+    def train(self):
         """
         训练网络的过程。
         
@@ -419,71 +424,78 @@ class PPOAgent:
         # 从经验回放中获取数据并转换为tensor
         state_tensor=self.state_tensor
         next_state_tensor=self.next_state_tensor
-        action_tensor, reward_tensor, done_tensor,old_prob_tensor = self.dataToTensor()
+        action_tensor, reward_tensor,old_prob_tensor,done_tensor = self.dataToTensor()
      
-        # 转到cpu或者gpu训练
+        # 将数据移动到指定的设备（CPU或GPU）上
         state_tensor=state_tensor.to(self.device)
         action_tensor=action_tensor.to(self.device)
         reward_tensor=reward_tensor.to(self.device)
         next_state_tensor=next_state_tensor.to(self.device)
-        done_tensor=done_tensor.to(self.device)
         old_prob_tensor=old_prob_tensor.to(self.device)
+        done_tensor=done_tensor.to(self.device)
 
         # 对于每个训练回合的经验训练K_epoch次，更新网络参数
         for i in range(self.K_epoch):
-
-            # 计算价值估计V(s)
-            curValue_tensor = self.critic(state_tensor)
-
-            # 计算下一个状态的价值估计V(s')
-            nextValue_tensor = self.critic(next_state_tensor)
+            
+            # 1.计算机GAE优势函数
+            # 计算状态价值V(s),critic()评估当前状态的价值
+            stateReward_tensor = self.critic(state_tensor)
+            # 计算下一个状态价值估计V(s')
+            nextStateReward_tensor = self.critic(next_state_tensor)
+            # 根据奖励和下一个状态的价值估计计算目标价值
             # 计算回报,gamma折扣因子,用于衡量未来奖励的重要性
-            returnValue_tensor = reward_tensor + self.gamma * nextValue_tensor * done_tensor
-            # 计算状态价值的估计误差
-            delta = returnValue_tensor - curValue_tensor
-            advantage_tensor=self.get_GAE_advantage(self.gamma,self.gae_lambda,delta)
+            # 动作价值Q(s,a)是当前动作价值和下一状态价值的加权和
+            # Q(s,a)=r+gamma*V(s')
+            actionReward_tensor = reward_tensor + self.gamma * nextStateReward_tensor * done_tensor
+            # 计算优势函数,减去一个baseline使得优势函数更稳定,不至于方差太大
+            # 优势函数通过反向计算优势使后面状态价值增强,使得agent更关注长期奖励,而优势的意义在于当前动作相对于其他动作的优势
+            # A(s,a)=Q(s,a)-V(s),优势函数=动作价值-状态价值,当前状态采取的动作相比其他动作的优势
+            # 通过V(s)得到动作价值和优势函数A(s,a)使网络只需要训练评价网络V()
+            advantageDelta_tensor = actionReward_tensor - stateReward_tensor
+            # 计算Generalized Advantage Estimate (GAE) 以改进优势函数的估计
+            GAEadvantage_tensor=self.getGAE(self.gae_lambda,advantageDelta_tensor)
             # 将优势函数转到device
-            advantage_tensor = advantage_tensor.to(self.device)
+            GAEadvantage_tensor = GAEadvantage_tensor.to(self.device)
 
+            # 2.计算ppo策略优势
             # 计算当前策略
             new_prob_tensor = self.actor(state_tensor)
             # 从当前策略中获取实际采取的动作的概率
             new_action_prob_tensor = new_prob_tensor.gather(1,action_tensor)
-            # 计算新旧策略的比例
-            # 如果新策略更倾向于某个动作（比例大于1），那么就强化这个动作的学习
-            # 在训练中，网络更新参数后某个动作概率被优化大了，则表示鼓励这个动作
-            ratio = new_action_prob_tensor/old_prob_tensor
-            # 计算两个策略梯度损失的最小值
-            # surr1和surr2分别是未裁剪和裁剪后的策略比率乘以优势函数
-            # 这体现了TRPO中的信任区域思想，通过限制策略更新的幅度来维持学习过程的稳定性。
-            # 平衡探索与利用，保证策略更新既不过于激进也不过于保守。
-            # 通过最小化surrogate loss（即surr1和surr2的最小值），既能鼓励朝着高优势动作移动（通过优势函数放大更新），
-            # 又通过裁剪避免更新幅度过大导致策略不稳定。
-            weighted_probs = ratio * advantage_tensor
-            weighted_clipped_probs = torch.clamp(ratio, 1-self.eps_clip, 1+self.eps_clip) * advantage_tensor
+            # 新旧策略比率,ratio=e^(a-b),两策略相等ratio=1
+            ratio = torch.exp(new_action_prob_tensor-old_prob_tensor)
+            # 计算未裁剪的策略损失
+            policy_probs = ratio * GAEadvantage_tensor
+            # 计算裁剪的策略损失,这里clamp将输出限制到min(0.9)-max(1.1)之间,防止过大
+            # torch.clamp(input, min, max, out=None) → Tensor
+            # 输入张量的元素限制在min和max之间，并将结果输出到out张量中，如果out为None，则创建一个新的张量。
+            policy_clipped_probs = torch.clamp(ratio, 1-self.ppo_clip, 1+self.ppo_clip) * GAEadvantage_tensor
+            # 取未裁剪和裁剪策略优势的较小值作为策略损失,其本质为获得奖励的期望值
+            # 取相反数作为loss往最小优化,即是让期望奖励最大
+
+            # 3.计算损失
             # actor损失
-            actor_loss  = -torch.min(weighted_probs, weighted_clipped_probs).mean()
+            actor_policy_loss  = -torch.min(policy_probs, policy_clipped_probs)
             # critic损失
-            critic_loss = nn.functional.mse_loss(curValue_tensor, returnValue_tensor)
-            # 总损失
-            loss = actor_loss + critic_loss
+            critic_loss = nn.functional.mse_loss(stateReward_tensor, actionReward_tensor)
 
-            # 输出当前回合的损失平均值
-            print('loss mean:',f'{loss.mean().item():.5f}')
+            # 输出当前epoch的平均损失
+            print('actor_loss mean:',f'{actor_policy_loss.mean().item():.5f}','critic_loss mean:',f'{critic_loss.mean().item():.5f}')
 
-            # # 清除梯度缓存，进行反向传播，更新网络参数
+            # 4.分别更新网络参数
+            # 清除梯度缓存，进行反向传播，更新网络参数
             self.actor_optimizer.zero_grad()
             self.critic_optimizer.zero_grad()
-            # 反向传播，计算当前梯度
-            loss.mean().backward()
+            # actor反向传播，计算当前梯度
+            actor_policy_loss.mean().backward()
+            # critic反向传播，计算当前梯度
+            critic_loss.mean().backward()
+            # 对梯度进行裁剪，以防止梯度爆炸
             # 梯度裁剪，norm_type=2: 默认是2范数（即欧几里得范数）
             # 对模型中的所有参数的梯度计算其2范数，如果该范数大于1，则将所有梯度按比例缩小，
             # 使得整体梯度的2范数刚好为1，以此来避免梯度爆炸，稳定训练过程。
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1, norm_type=2)
             torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 1)
-            # 查看权重梯度值
-            # print(self.actor.fc1.weight.grad)
-            # print(self.critic.fc1.weight.grad)
             # 更新参数
             self.actor_optimizer.step()
             self.critic_optimizer.step()
@@ -502,7 +514,7 @@ def main():
     # device = torch.device('cpu')	# 使用cpu训练
     device = torch.device('cuda')	# 使用gpu训练
     # 学习率
-    learning_rate=0.0001
+    learning_rate=0.001
     # 一次经验池数据训练次数
     train_epoch=3
     # 输入特征数
@@ -529,14 +541,18 @@ def main():
         actor_optimizer,
         critic_optimizer,
         device)
-    # 加载模型
-    # model=torch.load(modelFilePath_str)
     # 动作字典
     action_dict={0:'n',1:'e',2:'s',3:'w'}
     # 每一轮训练最大步数,也等于经验池最大长度
     maxStep_int=21
-    epoch_int=300
-    for n_epi in range(epoch_int):
+    totalEpoch_int=300
+    # 训练可视化
+    # import wandb
+    # wandb.init(project='ppo_train_treasureHunt', name=time.strftime('%m%d%H%M%S'))
+    # wandb.login
+    # # 训练日志
+    # train_log = {}
+    for epoch_int in range(totalEpoch_int):
         
         # 初始化
         reset_game_state()
@@ -556,77 +572,88 @@ def main():
         check_game_over()
         # 总得分
         totalReward_float=0.0
-        # 步数计数
-        steps_int=0
-        while not done:
-            #每T_horizon次之后或者游戏结束后训练更新网络
-            for t in range(maxStep_int):
-                #返回概率tensor
-                prob = ppoAgent_model.actor(state_tensor)
-                # 创建概率分布模型,然后利用这个分布进行采样、计算对数概率、熵等操作
-                m = Categorical(prob)
-                # # 根据策略分布采样得到概率索引值，根据概率采样，并不一定会取到最大概率所在的索引值
-                # # 通过概率取样增加随机性可以探索更多可能性
-                a = m.sample().item()
-                # 放弃随机,通过概率取最大值索引
-                # a = torch.argmax(prob).item()
-                #输入动作,返回动作后环境,回报,是否游戏结束
-                print('action_dict:',action_dict.get(a))
-                move(action_dict.get(a))
-                # 步数加1
-                steps_int+=1
-                window.update_idletasks()  # 更新界面
-                window.update()  # 更新并等待一小段时间让界面反应
-                time.sleep(0.01)  # 控制自动播放的速度，可调整
-                # 判断游戏是否结束
-                check_game_over()
-                done = game_over
-                # s_prime等于玩家和宝藏坐标
-                nextState=player_pos+treasurePos_tuple
-                nextState_tensor=torch.tensor(nextState).float().to(device)
-                # r等于玩家和宝藏坐标差即玩家和宝藏距离越近,reward越高
-                # 奖励权重值,用于修正奖励大小
-                rewardWeight_float=10.0
-                # r=nextState[0]-nextState[2]+nextState[1]-nextState[3]+rewardbias_float
-                # 判断是接近还是远离宝藏
-                # 之前距离
-                oldDistance_float = abs(state_tensor[0]-state_tensor[2])+abs(state_tensor[1]-state_tensor[3])
-                nextDistance_float = abs(nextState_tensor[0]-nextState_tensor[2])+abs(nextState_tensor[1]-nextState_tensor[3])
-                if nextDistance_float<oldDistance_float:
-                    isNearFlag_int=1
-                elif nextDistance_float==oldDistance_float:
-                    isNearFlag_int=0
-                else:
-                    isNearFlag_int=-1
-                r=rewardWeight_float*isNearFlag_int
-                # 奖励缩放因子,用于修正奖励大小
-                rewardScale_float=10
-                r=r*rewardScale_float
-                # 步数越高奖励越低
-                # 步数奖励缩放因子,用于修正奖励大小
-                stepRewardScale_float=5
-                r=r-steps_int*stepRewardScale_float
-                # 如果找到宝藏,奖励100
-                if player_pos == treasurePos_tuple:
-                    r=r+1000
+        # epoch日志
+        # train_log['train/epoch'] = epoch_int
+        # 每T_horizon次之后或者游戏结束后训练更新网络
+        for step_int in range(maxStep_int):
+            #返回概率tensor
+            prob = ppoAgent_model.actor(state_tensor)
+            # 创建概率分布模型,然后利用这个分布进行采样、计算对数概率、熵等操作
+            m = Categorical(prob)
+            # # 根据策略分布采样得到概率索引值，根据概率采样，并不一定会取到最大概率所在的索引值
+            # # 通过概率取样增加随机性可以探索更多可能性
+            a = m.sample().item()
+            # 放弃随机,通过概率取最大值索引
+            # a = torch.argmax(prob).item()
+            #输入动作,返回动作后环境,回报,是否游戏结束
+            print('action_dict:',action_dict.get(a))
+            move(action_dict.get(a))
+            window.update_idletasks()  # 更新界面
+            window.update()  # 更新并等待一小段时间让界面反应
+            time.sleep(0.01)  # 控制自动播放的速度，可调整
+            # 判断游戏是否结束
+            check_game_over()
+            done = game_over
+            # nextState等于玩家和宝藏坐标
+            nextState=player_pos+treasurePos_tuple
+            nextState_tensor=torch.tensor(nextState).float().to(device)
+            # r等于玩家和宝藏坐标差即玩家和宝藏距离越近,reward越高
+            # r=nextState[0]-nextState[2]+nextState[1]-nextState[3]+rewardbias_float
+            # 判断是接近还是远离宝藏
+            # 之前距离
+            oldDistance_float = abs(state_tensor[0]-state_tensor[2])+abs(state_tensor[1]-state_tensor[3])
+            nextDistance_float = abs(nextState_tensor[0]-nextState_tensor[2])+abs(nextState_tensor[1]-nextState_tensor[3])
+            if nextDistance_float<oldDistance_float:
+                isNearFlag_int=1
+            elif nextDistance_float==oldDistance_float:
+                isNearFlag_int=0
+            else:
+                isNearFlag_int=-1
+            # 奖励权重值,用于修正奖励大小
+            rewardWeight_float=10.0
+            r=rewardWeight_float*isNearFlag_int
+            # 步数惩罚因子,用于修正奖励大小
+            stepPunishment_float=5
+            r=r-stepPunishment_float
+            # 如果找到宝藏,奖励100
+            if player_pos == treasurePos_tuple:
+                r=r+100
 
-                # 当前总得分
-                totalReward_float=totalReward_float+r
-                # 将当前的经验数据（状态、动作、奖励等）放入模型的经验回放缓冲区
-                print(state_tensor, 'a:',a, r, nextState_tensor, prob[a].item(),done)
-                ppoAgent_model.saveMemory(state_tensor, a, totalReward_float, nextState_tensor, done, prob[a].item())
+            # 如果步数达到上限,设置done标志
+            if step_int==19:
+                done=True
+            else:
+                done=False
+            
+            # 当前总得分
+            totalReward_float=totalReward_float+r
+            # 将当前的经验数据（状态、动作、奖励等）放入模型的经验回放缓冲区
+            print(state_tensor, 'a:',a, r, nextState_tensor, prob[a].item(),done)
+            ppoAgent_model.saveMemory(state_tensor, a, totalReward_float, nextState_tensor,prob[a].item(),done)
 
-                #环境继承
-                state_tensor = nextState_tensor
-                #当前得分
-                print('step:',t,'reward',r,'totalReward_float',totalReward_float)
-                if done:
-                    print('game over')
-                    break
+            #环境继承
+            state_tensor = nextState_tensor
 
-            # 用积累的经验进行模型训练
-            ppoAgent_model.updateModel()
+            #当前得分
+            print('step:',step_int,'reward',r,'totalReward',totalReward_float)
+            if player_pos==treasurePos_tuple or done == True:   
+                print('game over')
+                break
+                
+            # step日志
+            # train_log['train/step'] = step_int
+            # # 奖励日志
+            # train_log['train/reward'] = totalReward_float
 
+               
+        # 总奖励日志
+        # train_log['train/totalReward'] = totalReward_float/step_int
+        # # wandb写入日志
+        # wandb.log(train_log)
+
+        # 用积累的经验进行模型训练
+        ppoAgent_model.train()
+        
         # 存储模型
         # 模型转到cpu
         # ppoAgent_model.actor.to('cpu')
@@ -638,6 +665,9 @@ def main():
         # # 存储完成后再转到gpu继续训练
         # ppoAgent_model.actor.to(device)
         # ppoAgent_model.critic.to(device)
+
+    # 结束日志记录,并上传
+    # wandb.finish()
 
 def test():
     global player_pos, game_over, steps_taken
