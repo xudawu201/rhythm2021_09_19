@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2024-06-09 17:31:00
 LastEditors: xudawu
-LastEditTime: 2024-06-24 02:04:02
+LastEditTime: 2024-06-25 23:12:08
 '''
 
 import tkinter as tk  # 导入Tkinter库用于构建图形用户界面
@@ -246,10 +246,12 @@ class Actor(nn.Module):
         self.output_size = output_size
         # 定义一个全连接层序列，用于从输入到输出的转换。
         self.fc1 = nn.Linear(self.input_size,1048)
+        # 激活函数
+        self.gelu=nn.GELU()
         # 上下左右四个输出
         self.fc2 = nn.Linear(1048,self.output_size)
         
-    def forward(self, state_tensor):
+    def forward(self, state_tensor,dim_int=1):
         """
         前向传播函数，用于计算给定状态的输出分布。
 
@@ -261,12 +263,13 @@ class Actor(nn.Module):
         """
         # 使用全连接层(self.fc)处理输入状态
         x_tensor=self.fc1(state_tensor)
-        # LeakyReLU激活函数处理输入x
-        x_tensor=nn.functional.leaky_relu(x_tensor)
+        # 激活函数处理输入x
+        x_tensor=self.gelu(x_tensor)
         # 通过全连接层fc2得到动作网络的输出
-        x_tensor=self.fc2(x_tensor)
-        # 使用softmax函数将输出转换为概率分布
-        prob = nn.functional.softmax(x_tensor)
+        # x_tensor=self.fc2(x_tensor)
+        # softmax转为和为1的概率tensor,默认dim=1对第二维进行softmax
+        # prob = torch.nn.functional.softmax(x_tensor,dim=dim_int)
+        prob = self.fc2(x_tensor)
         return prob
     
 class Critic(nn.Module):
@@ -285,14 +288,16 @@ class Critic(nn.Module):
         self.input_size = input_size
         # 定义一个全连接层序列，用于从输入到输出的转换。
         self.fc1 = nn.Linear(self.input_size,1048)
+        # 激活函数
+        self.gelu=nn.GELU()
         # 上下左右四个输出
         self.fc2 = nn.Linear(1048,1)
         
     def forward(self, state_tensor):
         # 使用全连接层(self.fc)处理输入状态
         x_tensor=self.fc1(state_tensor)
-        # LeakyReLU激活函数处理输入x
-        x_tensor=nn.functional.leaky_relu(x_tensor)
+        # 激活函数处理输入x
+        x_tensor=self.gelu(x_tensor)
         # 通过全连接层fc2得到评价网络的输出
         value=self.fc2(x_tensor)
         return value
@@ -459,46 +464,56 @@ class PPOAgent:
 
             # 2.计算ppo策略优势
             # 计算当前策略
-            new_prob_tensor = self.actor(state_tensor)
+            x_tensor = self.actor(state_tensor,dim_int=1)
+            new_prob_tensor=torch.nn.functional.softmax(x_tensor,dim=1)
             # 从当前策略中获取实际采取的动作的概率
             new_action_prob_tensor = new_prob_tensor.gather(1,action_tensor)
             # 新旧策略比率,ratio=e^(a-b),两策略相等ratio=1
             ratio = torch.exp(new_action_prob_tensor-old_prob_tensor)
             # 计算未裁剪的策略损失
             policy_probs = ratio * GAEadvantage_tensor
+            print('policy_probs',policy_probs.mean().item())
+            print('ratio',ratio.mean().item())
+            print('GAEadvantage_tensor',GAEadvantage_tensor.mean().item())
             # 计算裁剪的策略损失,这里clamp将输出限制到min(0.9)-max(1.1)之间,防止过大
             # torch.clamp(input, min, max, out=None) → Tensor
             # 输入张量的元素限制在min和max之间，并将结果输出到out张量中，如果out为None，则创建一个新的张量。
             policy_clipped_probs = torch.clamp(ratio, 1-self.ppo_clip, 1+self.ppo_clip) * GAEadvantage_tensor
             # 取未裁剪和裁剪策略优势的较小值作为策略损失,其本质为获得奖励的期望值
-            # 取相反数作为loss往最小优化,即是让期望奖励最大
+            # GAE优势越小,则代表动作价值和状态价值之差越小,表明当前状态采取的动作获得价值接近环境期望的长期价值
+            # GAE相当于将普通advantage折中平滑了一下
 
             # 3.计算损失
-            # actor损失
+            # actor损失,取相反数,使actor往GAE优势小的方向优化,即使得平均策略都是好的方向优化
+            # actor_policy_loss  = -torch.min(policy_probs, policy_clipped_probs)+0.5*torch.nn.functional.mse_loss(stateReward_tensor, actionReward_tensor)
             actor_policy_loss  = -torch.min(policy_probs, policy_clipped_probs)
-            # critic损失
-            critic_loss = nn.functional.mse_loss(stateReward_tensor, actionReward_tensor)
 
-            # 输出当前epoch的平均损失
-            print('actor_loss mean:',f'{actor_policy_loss.mean().item():.5f}','critic_loss mean:',f'{critic_loss.mean().item():.5f}')
+            # critic损失
+            critic_loss = torch.nn.functional.mse_loss(stateReward_tensor, actionReward_tensor)
+
+            # 总损失
+            total_loss = actor_policy_loss+0.5*critic_loss
+            print('total_loss mean:',f'{total_loss.mean().item():.5f}')
 
             # 4.分别更新网络参数
             # 清除梯度缓存，进行反向传播，更新网络参数
             self.actor_optimizer.zero_grad()
             self.critic_optimizer.zero_grad()
-            # actor反向传播，计算当前梯度
-            actor_policy_loss.mean().backward()
-            # critic反向传播，计算当前梯度
-            critic_loss.mean().backward()
+
+            # 反向传播,计算梯度
+            total_loss.mean().backward()
+
             # 对梯度进行裁剪，以防止梯度爆炸
             # 梯度裁剪，norm_type=2: 默认是2范数（即欧几里得范数）
             # 对模型中的所有参数的梯度计算其2范数，如果该范数大于1，则将所有梯度按比例缩小，
             # 使得整体梯度的2范数刚好为1，以此来避免梯度爆炸，稳定训练过程。
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1, norm_type=2)
             torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 1)
+
             # 更新参数
             self.actor_optimizer.step()
             self.critic_optimizer.step()
+
             
         # 训练完成,清空经验池以存储下一批经验
         self.clearMemory()
@@ -514,7 +529,7 @@ def main():
     # device = torch.device('cpu')	# 使用cpu训练
     device = torch.device('cuda')	# 使用gpu训练
     # 学习率
-    learning_rate=0.001
+    learning_rate=0.0005
     # 一次经验池数据训练次数
     train_epoch=3
     # 输入特征数
@@ -527,8 +542,8 @@ def main():
     actor_model = Actor(input_size, output_size)
     critic_model = Critic(input_size)
     # 使用Adam优化器优化网络
-    actor_optimizer = optim.Adam(actor_model.parameters(), lr=learning_rate)
-    critic_optimizer = optim.Adam(critic_model.parameters(), lr=learning_rate)
+    actor_optimizer = optim.AdamW(actor_model.parameters(), lr=learning_rate)
+    critic_optimizer = optim.AdamW(critic_model.parameters(), lr=learning_rate)
     # 加载模型
     # actor_model=torch.load(actorModelFilePath_str)
     # critic_model=torch.load(criticModelFilePath_str)
@@ -577,7 +592,8 @@ def main():
         # 每T_horizon次之后或者游戏结束后训练更新网络
         for step_int in range(maxStep_int):
             #返回概率tensor
-            prob = ppoAgent_model.actor(state_tensor)
+            x_tensor = ppoAgent_model.actor(state_tensor,dim_int=0)
+            prob=torch.nn.functional.softmax(x_tensor,dim=0)
             # 创建概率分布模型,然后利用这个分布进行采样、计算对数概率、熵等操作
             m = Categorical(prob)
             # # 根据策略分布采样得到概率索引值，根据概率采样，并不一定会取到最大概率所在的索引值
@@ -605,19 +621,19 @@ def main():
             nextDistance_float = abs(nextState_tensor[0]-nextState_tensor[2])+abs(nextState_tensor[1]-nextState_tensor[3])
             if nextDistance_float<oldDistance_float:
                 isNearFlag_int=1
-            elif nextDistance_float==oldDistance_float:
-                isNearFlag_int=0
+            # elif nextDistance_float==oldDistance_float:
+            #     isNearFlag_int=0
             else:
                 isNearFlag_int=-1
             # 奖励权重值,用于修正奖励大小
             rewardWeight_float=10.0
             r=rewardWeight_float*isNearFlag_int
             # 步数惩罚因子,用于修正奖励大小
-            stepPunishment_float=5
+            stepPunishment_float=3
             r=r-stepPunishment_float
             # 如果找到宝藏,奖励100
             if player_pos == treasurePos_tuple:
-                r=r+100
+                r=r+300
 
             # 如果步数达到上限,设置done标志
             if step_int==19:
