@@ -2,7 +2,7 @@
 Author: xudawu
 Date: 2022-01-22 19:13:06
 LastEditors: xudawu
-LastEditTime: 2022-01-24 16:44:37
+LastEditTime: 2024-06-29 12:26:30
 '''
 #建立CNN神经网路
 '''
@@ -24,62 +24,87 @@ dilation (int or tuple, optional) – Spacing between kernel elements. Default: 
 groups (int, optional) – Number of blocked connections from input channels to output channels. Default: 1
 bias (bool, optional) – If True, adds a learnable bias to the output. Default: True
 '''
-from matplotlib.pyplot import get
 import torch
 import torch.nn as nn
+
 class CNN(nn.Module):
-    def __init__(self, image_high,poolKernel_size,in_channels, out_channels, kernel_size, stride,out_features):
-        super(CNN,self).__init__()#调用Module的构造函数, super(Linear, self).__init__()
-        self.image_high = image_high
+    def __init__(self, in_channels,out_channels,padding,linear_input_size,out_features):
+        super(CNN,self).__init__()
+        
+        # 输入通道数 
         self.in_channels = in_channels
+        # 全连接层输入大小
+        self.linear_input_size = linear_input_size
+        # 第一层卷积输出通道数
         self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.stride = stride
+        # 全连接层输出类别数
         self.out_features = out_features
-        self.poolKernel_size = poolKernel_size
-
-        self.conv = nn.Sequential(
-            nn.Conv2d(
-                in_channels=self.in_channels,  #输入图像通道数
-                out_channels=self.out_channels,  #卷积产生的通道数,即输出的深度,多少个filter
-                kernel_size=self.kernel_size,  #卷积核尺寸，可以设为1个int型数或者一个(int, int)型的元组。例如(2,3)是高2宽3卷积核
-                stride=self.stride,  #扫描两个相邻区域之间的步长
-                padding=int((kernel_size-stride)/2) #使卷积后图片尺寸不变化
-            ),  #卷积层1
-            nn.ReLU(),  #激活函数
-            nn.MaxPool2d(kernel_size=self.poolKernel_size),  #池化层,降维，减少计算开销。stride默认值是kernel_size
-
-            nn.Conv2d(self.out_channels,self.out_channels*2,self.kernel_size,self.stride,padding=int((kernel_size-stride)/2)),  #卷积层2
-            nn.ReLU(),  #激活函数
-            nn.MaxPool2d(kernel_size=self.poolKernel_size),
+        # 边缘填充0圈数
+        self.padding=padding
+        
+        # 卷积层1
+        self.conv1 = nn.Sequential(
+            # 卷积层,padding：前向计算时在输入特征图周围添加0的圈数
+            nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels, kernel_size=5, stride=2, padding=self.padding),
+            # 归一化层
+            nn.BatchNorm2d(self.out_channels),
+            # 池化层
+            nn.MaxPool2d(kernel_size=5, stride=2)
         )
-        tensorSize1_float = (self.image_high - self.poolKernel_size)/self.poolKernel_size+1
-        tensorSize2_float = (tensorSize1_float - self.poolKernel_size)/self.poolKernel_size+1
-        tensorSize_int = int(tensorSize2_float)
-        self.out = nn.Linear(in_features=self.out_channels * 2*tensorSize_int*tensorSize_int, out_features=out_features)
 
-    #三维数据展平成2维数据
+        # 卷积层2
+        self.conv2 = nn.Sequential(
+            # 卷积层
+            nn.Conv2d(in_channels=self.out_channels, out_channels=self.out_channels*2, kernel_size=4, stride=2, padding=self.padding),
+            # 归一化层
+            nn.BatchNorm2d(self.out_channels*2),
+            # 池化层
+            nn.MaxPool2d(kernel_size=4, stride=2)
+        )
+
+        # 卷积层3
+        self.conv3 = nn.Sequential(
+            # 卷积层
+            nn.Conv2d(in_channels=self.out_channels*2, out_channels=self.out_channels*4, kernel_size=3, stride=1, padding=self.padding),
+            # 归一化层
+            nn.BatchNorm2d(self.out_channels*4),
+            # 池化层
+            nn.MaxPool2d(kernel_size=3, stride=1)
+        )
+
+        # 展平层
+        self.flatten = torch.nn.Flatten()
+        # 激活层1
+        self.gelu = nn.GELU()
+        # 全连接层1
+        self.fc1 = nn.Linear(self.linear_input_size, self.out_features)
+
     def forward(self,x):
-        x = self.conv(x)
-        x = x.view(x.size(0), -1)  # 将四维张量转换为二维张量之后，才能作为全连接层的输入
-        output = self.out(x)
-        return output
+        # 多层卷积
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        # 展平层
+        x=self.flatten(x)
+        # 激活层
+        x = self.gelu(x)
+        # 全连接层1
+        x = self.fc1(x)
+        return x
 
-#定义网络参数
-image_high = 16
-poolKernel_size = 3
+# 定义网络参数
+# 输入图像通道数
 in_channels = 1
-out_channels = 2
-kernel_size = 3
-stride = 1
+# 第一层卷积输出通道数
+out_channels=2
+# 边缘填充0圈数
+padding_size=4
+# 全连接层输入大小
+linear_input_size=200
+# 全连接层输出类别数
 out_features = 3
-CNN_model = CNN(image_high=image_high,
-          poolKernel_size=poolKernel_size,
-          in_channels=in_channels,
-          out_channels=out_channels,
-          kernel_size=kernel_size,
-          stride=stride,
-          out_features=out_features)
+# 实例化cnn网络
+CNN_model = CNN(in_channels,out_channels,padding_size,linear_input_size,out_features)
 print(CNN_model)  #打印结构
 
 #CNN网络测试
@@ -126,7 +151,7 @@ content_tensor = torch.FloatTensor(content_list).reshape(-1, 1, 16, 16)
 print('- '*10,'分割线','- '*10)
 print('content',content_tensor.shape)
 label_tensor = torch.FloatTensor(label_list)
-dataset_loader = getDataset(content_tensor, label_tensor, 1)
+dataset_loader = getDataset(content_tensor, label_tensor, 8)
 print(dataset_loader)
 
 #CNN网络训练
@@ -136,18 +161,18 @@ criterion = torch.nn.CrossEntropyLoss()  #交叉熵损失函数
 
 print('开始训练')
 CNN_model.train()
-epoch = 100
+epoch = 200
 for item in range(epoch):
     for input_batch, target_batch in dataset_loader:
         output_tensor = CNN_model(input_batch)
-        print('output_tensor:', output_tensor.detach().numpy())
-        print(target_batch)
+        # print('output_tensor:', output_tensor.detach().numpy())
+        # print(target_batch)
         loss = criterion(output_tensor, target_batch)
         print('loss:{:.4f}'.format(loss.item()))
 
-        #梯度清零
-        optimizer.zero_grad()
         #反向传播
         loss.backward()
         #梯度优化
         optimizer.step()
+        #梯度清零
+        optimizer.zero_grad()
