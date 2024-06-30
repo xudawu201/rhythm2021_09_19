@@ -589,24 +589,25 @@ def main():
     device = torch.device('cuda')	# 使用gpu训练
     # 学习率
     learning_rate=0.0001
-    # 一次经验池数据训练次数,一批网络输出的数据只能计算一次梯度,所以train_epoch只能为1
-    train_epoch=3
-    # 采样一批数据大小
-    sample_size=60
-    # 分批训练大小
-    batch_size=4
-    # n批数据后更新网络
-    n_batch_size=5
+    # 最大步数限制
+    maxStep_int=20
+    # 采集数据轮数
+    totalEpoch_int=300
     # buffer容量大小
     buffer_capacity=1000
     # 当buffer存储了多少数据后开始训练
     start_train_bufferSize_int=200
     # 更新TargetNet的epoch间隔
     updateQTargetNet_int=3
-    # 最大步数限制
-    maxStep_int=20
-    # 采集数据轮数
-    totalEpoch_int=300
+    # 一次经验池数据训练次数,一批网络输出的数据只能计算一次梯度,所以train_epoch只能为1
+    train_epoch=3
+    # 采样一批数据大小,前期尽量让一个epoch的数据量大于采样的大小。
+    # 后期学习能力强，agent不会导致游戏结束，一个epoch的数据量会很多
+    sample_size=60
+    # 分批训练大小
+    batch_size=4
+    # n批数据后更新网络
+    n_batch_size=5
 
     # 定义网络参数
     # 输入图像通道数
@@ -755,7 +756,9 @@ def main():
             state_tuple=nextState_tuple
 
             #打印当前步信息
-            # print('step:',step_int,'action:',action_dict.get(action_int),'reward:',reward_float,'epsilon:',epsilon,done)
+            # 使用detach()截断梯度计算,在训练中会再次用网络进行输出,这里不需要再计算梯度
+            prob=torch.nn.functional.softmax(x_tensor,dim=1).detach()
+            print('step:',step_int,'action:',action_dict.get(action_int),'reward:',reward_float,'epsilon:',epsilon,'prob:',prob[0][action_int].item(),done)
 
             if player_pos==treasurePos_tuple or done == True:   
                 # print('game over')
